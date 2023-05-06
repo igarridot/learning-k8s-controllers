@@ -36,6 +36,9 @@ type CertificateReconciler struct {
 	Scheme *runtime.Scheme
 }
 
+const CertRenewalPeriod = 90
+const CertIsNearToExpire = 30
+
 //+kubebuilder:rbac:groups=tls.igarrido.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=tls.igarrido.io,resources=certificates/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=tls.igarrido.io,resources=certificates/finalizers,verbs=update
@@ -45,6 +48,7 @@ type CertificateReconciler struct {
 // Here we go with the reconcile magic
 func (r *CertificateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
+
 	fmt.Println("Starting reconciliation process")
 
 	// Load the Certificate by name
@@ -63,88 +67,53 @@ func (r *CertificateReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		return ctrl.Result{}, err
 	}
 
-	// Secret builder
-	constructSecretForCertificate := func(certificate *tlsv1.Certificate) (*corev1.Secret, error) {
-
-		secret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Labels:      make(map[string]string),
-				Annotations: make(map[string]string),
-				Name:        certificate.Name,
-				Namespace:   certificate.Namespace,
-			},
-			StringData: make(map[string]string),
-		}
-		if err := ctrl.SetControllerReference(certificate, secret, r.Scheme); err != nil {
-			return nil, err
-		}
-
-		return secret, nil
-	}
-
 	now := time.Now().Unix()
-
-	var certificateNeedsToBeRenewed = func(now, expireTime int64) bool {
-		if expireTime-now < 30 {
-			certificateNeedsToBeRenewed := true
-			fmt.Println("Certificate", certificate.Name, "needs to be renewed")
-			return certificateNeedsToBeRenewed
-		}
-		certificateNeedsToBeRenewed := false
-		fmt.Println("Certificate", certificate.Name, "does not need to be renewed")
-		return certificateNeedsToBeRenewed
-	}
 
 	if certificate.Status.ValidTo == 0 {
 		fmt.Println("Creating certificate", certificate.Name)
 
-		certificate.Status.ValidFrom = now
-		certificate.Status.ValidTo = now + 90
-		fmt.Println("Certificate", certificate.Name, "will be valid until: ", now+50)
+		CertificateTimestampManager(now, &certificate)
+		fmt.Println("Certificate", certificate.Name, "will be valid until: ", now+CertRenewalPeriod)
 
-		// Update the CRD status
-		if err := r.Status().Update(ctx, &certificate); err != nil {
-			fmt.Println(err, "Unable to update Certificate", certificate.Name, "status")
-			return ctrl.Result{}, err
+		_, err := UpdateCertificateStatus(r, ctx, &certificate)
+		if err != nil {
+			fmt.Println("Cannot update Certificate Status", err)
 		}
 
-		// actually make the job...
-		secret, err := constructSecretForCertificate(&certificate)
+		secret, err := ConstructSecretForCertificate(&certificate, r)
 		if err != nil {
 			fmt.Println(err, "Unable to construct secret from template")
 			return ctrl.Result{}, nil
 		}
 
-		// ...and create it on the cluster
-		if err := r.Create(ctx, secret); err != nil {
-			fmt.Println(err, "Unable to create secret for Certificate", certificate.Name, "secret", secret)
-			return ctrl.Result{}, err
+		_, err = CreateNewCertificateSecret(r, ctx, secret, &certificate)
+		if err != nil {
+			fmt.Println("Cannot create certificate", err)
 		}
 
 		fmt.Println("End of certificate", certificate.Name, "creation")
 	}
 
-	if certificateNeedsToBeRenewed(now, certificate.Status.ValidTo) {
+	if CertificateNeedsToBeRenewed(now, certificate.Status.ValidTo, certificate) {
 		fmt.Println("Renewing certificate", certificate.Name)
 
-		certificate.Status.ValidFrom = now
-		certificate.Status.ValidTo = now + 50
-		fmt.Println("Certificate", certificate.Name, "will be valid until: ", now+50)
+		CertificateTimestampManager(now, &certificate)
+		fmt.Println("Certificate", certificate.Name, "will be valid until: ", now+90)
 
-		if err := r.Status().Update(ctx, &certificate); err != nil {
-			fmt.Println(err, "Unable to update Certificate", certificate.Name, "status")
-			return ctrl.Result{}, err
+		_, err := UpdateCertificateStatus(r, ctx, &certificate)
+		if err != nil {
+			fmt.Println("Cannot update Certificate Status", err)
 		}
 
-		secret, err := constructSecretForCertificate(&certificate)
+		secret, err := ConstructSecretForCertificate(&certificate, r)
 		if err != nil {
 			fmt.Println(err, "Unable to construct secret from template")
 			return ctrl.Result{}, nil
 		}
 
-		if err := r.Update(ctx, secret); err != nil {
-			fmt.Println(err, "Unable to create secret for Certificate", certificate.Name, "secret", secret)
-			return ctrl.Result{}, err
+		_, err = RenewCertificate(r, ctx, secret, &certificate)
+		if err != nil {
+			fmt.Println("Cannot renew certificate", err)
 		}
 
 		fmt.Println("End of certificate", certificate.Name, "renewal")
