@@ -10,6 +10,18 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+type CertificateCredentials struct {
+	key  string
+	cert string
+}
+
+// Obtain TLS cert
+func ObtainTLSCertificate(secret *corev1.Secret) *corev1.Secret {
+	secret.StringData["tls.crt"] = "cert.pem"
+	secret.StringData["tls.key"] = "cert.key"
+	return secret
+}
+
 // Secret builder
 func ConstructSecretForCertificate(certificate *tlsv1.Certificate, r *CertificateReconciler) (*corev1.Secret, error) {
 	secret := &corev1.Secret{
@@ -20,6 +32,7 @@ func ConstructSecretForCertificate(certificate *tlsv1.Certificate, r *Certificat
 			Namespace:   certificate.Namespace,
 		},
 		StringData: make(map[string]string),
+		Type:       "kubernetes.io/tls",
 	}
 	if err := ctrl.SetControllerReference(certificate, secret, r.Scheme); err != nil {
 		fmt.Println("Unable so set controller reference on child object", err)

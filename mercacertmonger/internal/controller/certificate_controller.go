@@ -85,6 +85,7 @@ func (r *CertificateReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			fmt.Println(err, "Unable to construct secret from template")
 			return ctrl.Result{}, nil
 		}
+		secret = ObtainTLSCertificate(secret)
 
 		_, err = CreateNewCertificateSecret(r, ctx, secret, &certificate)
 		if err != nil {
@@ -110,6 +111,7 @@ func (r *CertificateReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 			fmt.Println(err, "Unable to construct secret from template")
 			return ctrl.Result{}, nil
 		}
+		secret = ObtainTLSCertificate(secret)
 
 		_, err = RenewCertificate(r, ctx, secret, &certificate)
 		if err != nil {
