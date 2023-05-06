@@ -10,11 +10,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-type CertificateCredentials struct {
-	key  string
-	cert string
-}
-
 // Obtain TLS cert
 func ObtainTLSCertificate(secret *corev1.Secret) *corev1.Secret {
 	secret.StringData["tls.crt"] = "cert.pem"
